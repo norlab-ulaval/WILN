@@ -13,7 +13,7 @@
 #include <norlab_icp_mapper_ros/srv/load_map.hpp>
 #include <service_caller/ServiceCaller.hpp>
 
-#include <geometry_msgs/msg/twist.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 
@@ -75,7 +75,7 @@ public:
         odomSubscription = this->create_subscription<nav_msgs::msg::Odometry>("odom_in", 1000,
                                                                               std::bind(&WilnNode::odomCallback, this,
                                                                                         std::placeholders::_1));
-        commandedVelocitySubscription = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel_in", 1000,
+        commandedVelocitySubscription = this->create_subscription<geometry_msgs::msg::TwistStamped>("cmd_vel_in", 1000,
                                                                                              std::bind(&WilnNode::commandVelocityCallback, this,
                                                                                                        std::placeholders::_1));
         plannedTrajectorySubscription = this->create_subscription<geometry_msgs::msg::PoseStamped>("pose_in", 1000,
@@ -146,7 +146,7 @@ private:
     rclcpp_action::Client<norlab_controllers_msgs::action::FollowPath>::SharedPtr followPathClient;
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odomSubscription;
-    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr commandedVelocitySubscription;
+    rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr commandedVelocitySubscription;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr plannedTrajectorySubscription;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr realTrajectorySubscription;
 //    rclcpp::Subscription<norlab_controllers_msgs::action::FollowPath::Result>::SharedPtr trajectoryResultSubscription;
@@ -162,9 +162,9 @@ private:
         robotPoseLock.unlock();
     }
 
-    void commandVelocityCallback(const geometry_msgs::msg::Twist& commandedVelocity)
+    void commandVelocityCallback(const geometry_msgs::msg::TwistStamped& commandedVelocity)
     {
-        drivingForward.store(commandedVelocity.linear.x >= 0.0);
+        drivingForward.store(commandedVelocity.twist.linear.x >= 0.0);
     }
 
     float computeAngleBetweenPoses(const geometry_msgs::msg::PoseStamped& firstPose, const geometry_msgs::msg::PoseStamped& secondPose)
