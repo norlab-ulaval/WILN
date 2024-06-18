@@ -27,8 +27,22 @@
 
 tf2::Quaternion HALF_TURN_ROTATION(0.0, 0.0, 1.0, 0.0);
 
-int TEMPORARY_STATUS_DURATION_MS = 2000;
-int STATUS_TIMER_PERIOD_MS = 500;
+const int TEMPORARY_STATUS_DURATION_MS = 2000;
+const int STATUS_TIMER_PERIOD_MS = 500;
+
+const wiln::msg::WilnStatus IDLE = wiln::build<wiln::msg::WilnStatus>()
+        .header(std_msgs::msg::Header())
+        .ok(true)
+        .message("IDLE");
+const wiln::msg::WilnStatus TEACHING = wiln::build<wiln::msg::WilnStatus>()
+        .header(std_msgs::msg::Header())
+        .ok(true)
+        .message("TEACHING");
+const wiln::msg::WilnStatus REPEATING = wiln::build<wiln::msg::WilnStatus>()
+        .header(std_msgs::msg::Header())
+        .ok(true)
+        .message("REPEATING");
+
 struct WilnStatusStruct {
     wiln::msg::WilnStatus status;
     wiln::msg::WilnStatus next_status;
@@ -351,10 +365,7 @@ private:
             res->success = false;
             res->message = "Trajectory is already being recorded.";
             
-            status.next_status = status.status;
-            status.status.ok = false;
-            status.status.message = res->message;
-            status.is_temporary = true;
+            setTemporaryStatus(false, res->message);
 
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
@@ -365,10 +376,7 @@ private:
             res->success = false;
             res->message = "Cannot start recording, trajectory is currently being played.";
 
-            status.next_status = status.status;
-            status.status.ok = false;
-            status.status.message = res->message;
-            status.is_temporary = true;
+            setTemporaryStatus(false, res->message);
 
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
@@ -379,8 +387,7 @@ private:
 
         recording = true;
 
-        status.status.ok = true;
-        status.status.message = "TEACHING";
+        status.status = TEACHING;
 
         auto enableMappingRequest = std::make_shared<std_srvs::srv::Trigger::Request>();
         enableMappingClient->async_send_request(enableMappingRequest);
@@ -425,10 +432,7 @@ private:
             res->success = false;
             res->message = "Trajectory is already not being recorded.";
             
-            status.next_status = status.status;
-            status.status.ok = false;
-            status.status.message = res->message;
-            status.is_temporary = true;
+            setTemporaryStatus(false, res->message);
 
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
@@ -437,8 +441,7 @@ private:
         res->success = true;
         res->message = "Stopped recording trajectory.";
 
-        status.status.ok = true;
-        status.status.message = "IDLE";
+        status.status = IDLE;
 
         recording = false;
         return;
@@ -450,10 +453,7 @@ private:
         res->success = true;
         res->message = "Cleared planned trajectory.";
 
-        status.next_status = status.status;
-        status.status.ok = true;
-        status.status.message = res->message;
-        status.is_temporary = true;
+        setTemporaryStatus(true, res->message);
 
         return;
     }
@@ -473,11 +473,7 @@ private:
             res->success = false;
             res->message = "Cannot cancel trajectory, no trajectory is being played.";
 
-            status.next_status.message = status.status.message;
-            status.next_status.ok = status.status.ok;
-            status.status.ok = false;
-            status.status.message = res->message;
-            status.is_temporary = true;
+            setTemporaryStatus(false, res->message);
 
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
@@ -488,9 +484,7 @@ private:
         res->success = true;
         res->message = "Cancelled trajectory.";
 
-        status.status.ok = true;
-        status.status.message = "IDLE";
-
+        status.status = IDLE;
 
         // TODO: validate action call here
         followPathClient->async_cancel_all_goals();
@@ -725,10 +719,7 @@ private:
             res->success = false;
             res->message = "Trajectory is already being played.";
 
-            status.next_status = status.status;
-            status.status.ok = false;
-            status.status.message = res->message;
-            status.is_temporary = true;
+            setTemporaryStatus(false, res->message);
 
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
@@ -739,10 +730,7 @@ private:
             res->success = false;
             res->message = "Cannot play trajectory while recording.";
 
-            status.next_status = status.status;
-            status.status.ok = false;
-            status.status.message = res->message;
-            status.is_temporary = true;
+            setTemporaryStatus(false, res->message);
 
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
@@ -753,10 +741,7 @@ private:
             res->success = false;
             res->message = "Cannot play an empty trajectory.";
 
-            status.next_status = status.status;
-            status.status.ok = false;
-            status.status.message = res->message;
-            status.is_temporary = true;
+            setTemporaryStatus(false, res->message);
 
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
@@ -839,8 +824,7 @@ private:
         res->success = true;
         res->message = "Playing trajectory.";
 
-        status.status.ok = true;
-        status.status.message = "REPEATING";
+        status.status = REPEATING;
 
         return;
     }
@@ -852,10 +836,7 @@ private:
             res->success = false;
             res->message = "Trajectory is already being played.";
 
-            status.next_status = status.status;
-            status.status.ok = false;
-            status.status.message = res->message;
-            status.is_temporary = true;
+            setTemporaryStatus(false, res->message);
 
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
@@ -866,10 +847,7 @@ private:
             res->success = false;
             res->message = "Cannot play trajectory while recording.";
 
-            status.next_status = status.status;
-            status.status.ok = false;
-            status.status.message = res->message;
-            status.is_temporary = true;
+            setTemporaryStatus(false, res->message);
 
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
@@ -880,10 +858,7 @@ private:
             res->success = false;
             res->message = "Cannot play an empty trajectory.";
 
-            status.next_status = status.status;
-            status.status.ok = false;
-            status.status.message = res->message;
-            status.is_temporary = true;
+            setTemporaryStatus(false, res->message);
 
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
@@ -988,8 +963,7 @@ private:
         res->success = true;
         res->message = "Playing loop trajectory";
 
-        status.status.ok = true;
-        status.status.message = "REPEATING";
+        status.status = REPEATING;
 
         return;
     }
@@ -1017,14 +991,22 @@ private:
             status.status.message = status.next_status.message;
             status.is_temporary = false;
             status.elapsed_time_since_last_update = 0;
-        } else if (status.is_temporary)
+        } 
+        else if (status.is_temporary)
         {
             status.elapsed_time_since_last_update += STATUS_TIMER_PERIOD_MS;
         }
 
-
         status.status.header.stamp = this->now();
         statusPublisher->publish(status.status);
+    }
+
+    void setTemporaryStatus(bool ok, std::string message)
+    {
+        status.next_status = status.status;
+        status.status.ok = ok;
+        status.status.message = message;
+        status.is_temporary = true;
     }
 };
 
