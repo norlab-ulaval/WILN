@@ -1,3 +1,5 @@
+#include <chrono>
+#include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <fstream>
 #include <mutex>
@@ -21,8 +23,17 @@
 #include <norlab_controllers_msgs/msg/path_sequence.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <norlab_controllers_msgs/action/follow_path.hpp>
+#include "wiln/msg/wiln_status.hpp"
 
 tf2::Quaternion HALF_TURN_ROTATION(0.0, 0.0, 1.0, 0.0);
+
+struct WilnStatusStruct {
+    wiln::msg::WilnStatus status;
+    bool is_temporary;
+    int elapsed_time_since_last_update;
+    int temporary_duration = 2000;
+    wiln::msg::WilnStatus next_status;
+};
 
 class WilnNode : public rclcpp::Node
 {
@@ -91,6 +102,8 @@ public:
         publisher_qos.transient_local();
         plannedTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("planned_trajectory", publisher_qos);
         realTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("real_trajectory", publisher_qos);
+        statusPublisher = this->create_publisher<wiln::msg::WilnStatus>("/wiln/status", publisher_qos);
+        statusTimer = this->create_wall_timer(std::chrono::milliseconds(500), std::bind(&WilnNode::publishStatus, this));
 
         drivingForward.store(true);
         lastDrivingDirection.store(true);
@@ -154,6 +167,10 @@ private:
 
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr plannedTrajectoryPublisher;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr realTrajectoryPublisher;
+    rclcpp::Publisher<wiln::msg::WilnStatus>::SharedPtr statusPublisher;
+
+    WilnStatusStruct status;
+    rclcpp::TimerBase::SharedPtr statusTimer;
 
     void odomCallback(const nav_msgs::msg::Odometry& odomIn)
     {
@@ -332,6 +349,13 @@ private:
         {
             res->success = false;
             res->message = "Trajectory is already being recorded.";
+
+            status.status.ok = false;
+            status.status.message = res->message;
+            status.next_status.ok = true;
+            status.next_status.message = "TEACHING";
+            status.is_temporary = true;
+
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
@@ -340,6 +364,13 @@ private:
         {
             res->success = false;
             res->message = "Cannot start recording, trajectory is currently being played.";
+
+            status.status.ok = false;
+            status.status.message = res->message;
+            status.next_status.ok = true;
+            status.next_status.message = "TEACHING";
+            status.is_temporary = true;
+
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
@@ -347,6 +378,8 @@ private:
         res->success = true;
         res->message = "Recording trajectory.";
         recording = true;
+        status.status.ok = true;
+        status.status.message = "TEACHING";
 
         auto enableMappingRequest = std::make_shared<std_srvs::srv::Trigger::Request>();
         enableMappingClient->async_send_request(enableMappingRequest);
@@ -390,12 +423,22 @@ private:
         {
             res->success = false;
             res->message = "Trajectory is already not being recorded.";
+
+            status.status.ok = false;
+            status.status.message = res->message;
+            status.next_status.ok = true;
+            status.next_status.message = "IDLE";
+            status.is_temporary = true;
+
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
         
         res->success = true;
         res->message = "Stopped recording trajectory.";
+        status.status.ok = true;
+        status.status.message = "IDLE";
+
         recording = false;
         return;
     }
@@ -405,6 +448,13 @@ private:
         plannedTrajectory.paths.clear();
         res->success = true;
         res->message = "Cleared planned trajectory.";
+
+        status.next_status.ok = true;
+        status.next_status.message = status.status.message;
+        status.status.ok = true;
+        status.status.message = res->message;
+        status.is_temporary = true;
+
         return;
     }
 
@@ -422,6 +472,13 @@ private:
         {
             res->success = false;
             res->message = "Cannot cancel trajectory, no trajectory is being played.";
+
+            status.next_status.message = status.status.message;
+            status.next_status.ok = status.status.ok;
+            status.status.ok = false;
+            status.status.message = res->message;
+            status.is_temporary = true;
+
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
@@ -429,6 +486,9 @@ private:
         playing = false;
         res->success = true;
         res->message = "Cancelled trajectory.";
+        status.status.ok = true;
+        status.status.message = "IDLE";
+
 
         // TODO: validate action call here
         followPathClient->async_cancel_all_goals();
@@ -662,6 +722,13 @@ private:
         {
             res->success = false;
             res->message = "Trajectory is already being played.";
+
+            status.status.ok = false;
+            status.status.message = res->message;
+            status.next_status.ok = true;
+            status.next_status.message = "REPEATING";
+            status.is_temporary = true;
+
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
@@ -670,6 +737,13 @@ private:
         {
             res->success = false;
             res->message = "Cannot play trajectory while recording.";
+
+            status.status.ok = false;
+            status.status.message = res->message;
+            status.next_status.ok = true;
+            status.next_status.message = "RECORDING";
+            status.is_temporary = true;
+
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
@@ -678,6 +752,13 @@ private:
         {
             res->success = false;
             res->message = "Cannot play an empty trajectory.";
+
+            status.status.ok = false;
+            status.status.message = res->message;
+            status.next_status.ok = true;
+            status.next_status.message = "IDLE";
+            status.is_temporary = true;
+
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
@@ -765,6 +846,12 @@ private:
         {
             res->success = false;
             res->message = "Trajectory is already being played.";
+            status.status.ok = false;
+            status.status.message = res->message;
+            status.next_status.ok = true;
+            status.next_status.message = "REPEATING";
+            status.is_temporary = true;
+
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
@@ -773,6 +860,12 @@ private:
         {
             res->success = false;
             res->message = "Cannot play trajectory while recording.";
+            status.status.ok = false;
+            status.status.message = res->message;
+            status.next_status.ok = true;
+            status.next_status.message = "RECORDING";
+            status.is_temporary = true;
+
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
@@ -781,6 +874,12 @@ private:
         {
             res->success = false;
             res->message = "Cannot play an empty trajectory.";
+            status.status.ok = false;
+            status.status.message = res->message;
+            status.next_status.ok = true;
+            status.next_status.message = "IDLE";
+            status.is_temporary = true;
+
             RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
@@ -899,6 +998,25 @@ private:
             }
         }
         return navPath;
+    }
+
+    void publishStatus()
+    {
+            
+        if (status.is_temporary && status.elapsed_time_since_last_update > 2000)
+        {
+            status.status.ok = status.next_status.ok;
+            status.status.message = status.next_status.message;
+            status.is_temporary = false;
+            status.elapsed_time_since_last_update = 0;
+        } else if (status.is_temporary)
+        {
+            status.elapsed_time_since_last_update += 500;
+        }
+
+
+        status.status.header.stamp = this->now();
+        statusPublisher->publish(status.status);
     }
 };
 
