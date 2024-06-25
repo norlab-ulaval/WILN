@@ -1,7 +1,9 @@
+#include <chrono>
+#include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <fstream>
 #include <mutex>
-#include <std_srvs/srv/empty.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -21,8 +23,32 @@
 #include <norlab_controllers_msgs/msg/path_sequence.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <norlab_controllers_msgs/action/follow_path.hpp>
+#include "wiln/msg/wiln_status.hpp"
 
 tf2::Quaternion HALF_TURN_ROTATION(0.0, 0.0, 1.0, 0.0);
+
+const int TEMPORARY_STATUS_DURATION_MS = 2000;
+const int STATUS_TIMER_PERIOD_MS = 500;
+
+const wiln::msg::WilnStatus IDLE = wiln::build<wiln::msg::WilnStatus>()
+        .header(std_msgs::msg::Header())
+        .ok(true)
+        .message("IDLE");
+const wiln::msg::WilnStatus TEACHING = wiln::build<wiln::msg::WilnStatus>()
+        .header(std_msgs::msg::Header())
+        .ok(true)
+        .message("TEACHING");
+const wiln::msg::WilnStatus REPEATING = wiln::build<wiln::msg::WilnStatus>()
+        .header(std_msgs::msg::Header())
+        .ok(true)
+        .message("REPEATING");
+
+struct WilnStatusStruct {
+    wiln::msg::WilnStatus status;
+    wiln::msg::WilnStatus next_status;
+    bool is_temporary;
+    int elapsed_time_since_last_update;
+};
 
 class WilnNode : public rclcpp::Node
 {
@@ -34,10 +60,10 @@ public:
 
         // TODO: Create service clients to call enable_mapping, disable_mapping, save_map and load_map
 
-        startRecordingService = this->create_service<std_srvs::srv::Empty>("start_recording",
+        startRecordingService = this->create_service<std_srvs::srv::Trigger>("start_recording",
                                                                            std::bind(&WilnNode::startRecordingServiceCallback, this, std::placeholders::_1,
                                                                                      std::placeholders::_2));
-        stopRecordingService = this->create_service<std_srvs::srv::Empty>("stop_recording",
+        stopRecordingService = this->create_service<std_srvs::srv::Trigger>("stop_recording",
                                                                           std::bind(&WilnNode::stopRecordingServiceCallback, this, std::placeholders::_1,
                                                                                     std::placeholders::_2));
         saveMapTrajService = this->create_service<wiln::srv::SaveMapTraj>("save_map_traj",
@@ -52,21 +78,21 @@ public:
         playLoopService = this->create_service<wiln::srv::PlayLoop>("play_loop",
                                                                     std::bind(&WilnNode::playLoopTrajectoryServiceCallback, this, std::placeholders::_1,
                                                                               std::placeholders::_2));
-        playLineService = this->create_service<std_srvs::srv::Empty>("play_line",
+        playLineService = this->create_service<std_srvs::srv::Trigger>("play_line",
                                                                      std::bind(&WilnNode::playLineTrajectoryServiceCallback, this, std::placeholders::_1,
                                                                                std::placeholders::_2));
-        cancelTrajectoryService = this->create_service<std_srvs::srv::Empty>("cancel_trajectory",
+        cancelTrajectoryService = this->create_service<std_srvs::srv::Trigger>("cancel_trajectory",
                                                                              std::bind(&WilnNode::cancelTrajectoryServiceCallback, this, std::placeholders::_1,
                                                                                        std::placeholders::_2));
-        smoothTrajectoryService = this->create_service<std_srvs::srv::Empty>("smooth_trajectory",
+        smoothTrajectoryService = this->create_service<std_srvs::srv::Trigger>("smooth_trajectory",
                                                                              std::bind(&WilnNode::smoothTrajectoryServiceCallback, this, std::placeholders::_1,
                                                                                        std::placeholders::_2));
-        clearTrajectoryService = this->create_service<std_srvs::srv::Empty>("clear_trajectory",
+        clearTrajectoryService = this->create_service<std_srvs::srv::Trigger>("clear_trajectory",
                                                                             std::bind(&WilnNode::clearTrajectoryServiceCallback, this, std::placeholders::_1,
                                                                                       std::placeholders::_2));
 
-        enableMappingClient = this->create_client<std_srvs::srv::Empty>("enable_mapping");
-        disableMappingClient = this->create_client<std_srvs::srv::Empty>("disable_mapping");
+        enableMappingClient = this->create_client<std_srvs::srv::Trigger>("enable_mapping");
+        disableMappingClient = this->create_client<std_srvs::srv::Trigger>("disable_mapping");
         saveMapClient = this->create_client<norlab_icp_mapper_ros::srv::SaveMap>("save_map");
         loadMapClient = this->create_client<norlab_icp_mapper_ros::srv::LoadMap>("load_map");
 
@@ -91,6 +117,8 @@ public:
         publisher_qos.transient_local();
         plannedTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("planned_trajectory", publisher_qos);
         realTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("real_trajectory", publisher_qos);
+        statusPublisher = this->create_publisher<wiln::msg::WilnStatus>("/wiln/status", publisher_qos);
+        statusTimer = this->create_wall_timer(std::chrono::milliseconds(STATUS_TIMER_PERIOD_MS), std::bind(&WilnNode::publishStatus, this));
 
         drivingForward.store(true);
         lastDrivingDirection.store(true);
@@ -105,19 +133,19 @@ private:
     geometry_msgs::msg::Pose robotPose;
     std::mutex robotPoseLock;
 
-    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr startRecordingService;
-    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr stopRecordingService;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr startRecordingService;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr stopRecordingService;
     rclcpp::Service<wiln::srv::SaveMapTraj>::SharedPtr saveMapTrajService;
     rclcpp::Service<wiln::srv::LoadMapTraj>::SharedPtr loadMapTrajService;
     rclcpp::Service<wiln::srv::LoadMapTraj>::SharedPtr loadMapTrajFromEndService;
     rclcpp::Service<wiln::srv::PlayLoop>::SharedPtr playLoopService;
-    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr playLineService;
-    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr cancelTrajectoryService;
-    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr smoothTrajectoryService;
-    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr clearTrajectoryService;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr playLineService;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr cancelTrajectoryService;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr smoothTrajectoryService;
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr clearTrajectoryService;
 
-    rclcpp::Client<std_srvs::srv::Empty>::SharedPtr enableMappingClient;
-    rclcpp::Client<std_srvs::srv::Empty>::SharedPtr disableMappingClient;
+    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr enableMappingClient;
+    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr disableMappingClient;
     rclcpp::Client<norlab_icp_mapper_ros::srv::SaveMap>::SharedPtr saveMapClient;
     rclcpp::Client<norlab_icp_mapper_ros::srv::LoadMap>::SharedPtr loadMapClient;
     std::atomic_bool lastDrivingDirection;
@@ -154,6 +182,10 @@ private:
 
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr plannedTrajectoryPublisher;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr realTrajectoryPublisher;
+    rclcpp::Publisher<wiln::msg::WilnStatus>::SharedPtr statusPublisher;
+
+    WilnStatusStruct status;
+    rclcpp::TimerBase::SharedPtr statusTimer;
 
     void odomCallback(const nav_msgs::msg::Odometry& odomIn)
     {
@@ -319,30 +351,50 @@ private:
         if(trajectory_result.code == rclcpp_action::ResultCode::SUCCEEDED)
         {
             RCLCPP_WARN(this->get_logger(), "Successfully reached goal!");
+
+            status.status = IDLE;
         }
         else
         {
             RCLCPP_WARN_STREAM(this->get_logger(), "Trajectory goal was not reached.");
+
+            status.status = IDLE;
+            setTemporaryStatus(false, "Trajectory goal was not reached.");
         }
     }
 
-    void startRecordingServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    void startRecordingServiceCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> req, std::shared_ptr<std_srvs::srv::Trigger::Response> res)
     {
         if(recording)
         {
-            RCLCPP_WARN(this->get_logger(), "Trajectory is already being recorded.");
+            res->success = false;
+            res->message = "Trajectory is already being recorded.";
+            
+            setTemporaryStatus(false, res->message);
+
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
 
         if(playing)
         {
-            RCLCPP_WARN(this->get_logger(), "Cannot start recording, trajectory is currently being played.");
+            res->success = false;
+            res->message = "Cannot start recording, trajectory is currently being played.";
+
+            setTemporaryStatus(false, res->message);
+
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
 
+        res->success = true;
+        res->message = "Recording trajectory.";
+
         recording = true;
 
-        auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+        status.status = TEACHING;
+
+        auto enableMappingRequest = std::make_shared<std_srvs::srv::Trigger::Request>();
         enableMappingClient->async_send_request(enableMappingRequest);
         return;
     }
@@ -378,39 +430,66 @@ private:
         return smoothTrajectory;
     }
 
-    void stopRecordingServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    void stopRecordingServiceCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> req, std::shared_ptr<std_srvs::srv::Trigger::Response> res)
     {
         if(!recording)
         {
-            RCLCPP_WARN(this->get_logger(), "Trajectory is already not being recorded.");
+            res->success = false;
+            res->message = "Trajectory is already not being recorded.";
+            
+            setTemporaryStatus(false, res->message);
+
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
+        
+        res->success = true;
+        res->message = "Stopped recording trajectory.";
+
+        status.status = IDLE;
 
         recording = false;
         return;
     }
 
-    void clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    void clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> req, std::shared_ptr<std_srvs::srv::Trigger::Response> res)
     {
         plannedTrajectory.paths.clear();
+        res->success = true;
+        res->message = "Cleared planned trajectory.";
+
+        setTemporaryStatus(true, res->message);
+
         return;
     }
 
-    void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> req, std::shared_ptr<std_srvs::srv::Trigger::Response> res)
     {
         plannedTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
+        res->success = true;
+        res->message = "Smoothed planned trajectory.";
         return;
     }
 
-    void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> req, std::shared_ptr<std_srvs::srv::Trigger::Response> res)
     {
         if(!playing)
         {
-            RCLCPP_WARN(this->get_logger(), "Cannot cancel trajectory, no trajectory is being played.");
+            res->success = false;
+            res->message = "Cannot cancel trajectory, no trajectory is being played.";
+
+            setTemporaryStatus(false, res->message);
+
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
 
         playing = false;
+
+        res->success = true;
+        res->message = "Cancelled trajectory.";
+
+        status.status = IDLE;
 
         // TODO: validate action call here
         followPathClient->async_cancel_all_goals();
@@ -487,7 +566,11 @@ private:
         }
 
         ltrFile.close();
-        RCLCPP_INFO(this->get_logger(), "LTR file succesfully saved");
+
+        // TODO: handle errors
+        res->success = true;
+        res->message = "LTR file succesfully saved";
+        RCLCPP_INFO(this->get_logger(), "%s", res->message.c_str());
     }
 
     void loadLTR(std::string fileName, bool fromEnd)
@@ -617,32 +700,55 @@ private:
     void loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
     {
         loadLTR(req->file_name.data, false);
+
+        // TODO : handle errors
+        res->success = true;
+        res->message = "Loaded LTR file";
         return;
     }
 
     void loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
     {
         loadLTR(req->file_name.data, true);
+
+        // TODO : handle errors
+        res->success = true;
+        res->message = "Loaded LTR file from end";
         return;
     }
 
-    void playLineTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    void playLineTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> req, std::shared_ptr<std_srvs::srv::Trigger::Response> res)
     {
         if(playing)
         {
-            RCLCPP_WARN(this->get_logger(), "Trajectory is already being played.");
+            res->success = false;
+            res->message = "Trajectory is already being played.";
+
+            setTemporaryStatus(false, res->message);
+
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
 
         if(recording)
         {
-            RCLCPP_WARN(this->get_logger(), "Cannot play trajectory while recording.");
+            res->success = false;
+            res->message = "Cannot play trajectory while recording.";
+
+            setTemporaryStatus(false, res->message);
+
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
 
         if(plannedTrajectory.paths.empty() || plannedTrajectory.paths.front().poses.empty())
         {
-            RCLCPP_WARN(this->get_logger(), "Cannot play an empty trajectory.");
+            res->success = false;
+            res->message = "Cannot play an empty trajectory.";
+
+            setTemporaryStatus(false, res->message);
+
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
 
@@ -700,7 +806,7 @@ private:
 
         realTrajectory.paths.clear();
 
-        auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+        auto disableMappingRequest = std::make_shared<std_srvs::srv::Trigger::Request>();
         disableMappingClient->async_send_request(disableMappingRequest);
 
         // TODO: validate action call
@@ -720,6 +826,11 @@ private:
                 std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
         followPathClient->async_send_goal(goal_msg, send_goal_options);
 
+        res->success = true;
+        res->message = "Playing trajectory.";
+
+        status.status = REPEATING;
+
         return;
     }
 
@@ -727,19 +838,34 @@ private:
     {
         if(playing)
         {
-            RCLCPP_WARN(this->get_logger(), "Trajectory is already being played.");
+            res->success = false;
+            res->message = "Trajectory is already being played.";
+
+            setTemporaryStatus(false, res->message);
+
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
 
         if(recording)
         {
-            RCLCPP_WARN(this->get_logger(), "Cannot play trajectory while recording.");
+            res->success = false;
+            res->message = "Cannot play trajectory while recording.";
+
+            setTemporaryStatus(false, res->message);
+
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
 
         if(plannedTrajectory.paths.empty())
         {
-            RCLCPP_WARN(this->get_logger(), "Cannot play an empty trajectory.");
+            res->success = false;
+            res->message = "Cannot play an empty trajectory.";
+
+            setTemporaryStatus(false, res->message);
+
+            RCLCPP_WARN(this->get_logger(), "%s", res->message.c_str());
             return;
         }
 
@@ -774,7 +900,7 @@ private:
 
         realTrajectory.paths.clear();
 
-        auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+        auto disableMappingRequest = std::make_shared<std_srvs::srv::Trigger::Request>();
         disableMappingClient->async_send_request(disableMappingRequest);
 
         // TODO: validate action call
@@ -838,6 +964,12 @@ private:
         send_goal_options.result_callback =
                 std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
         followPathClient->async_send_goal(goal_msg);
+
+        res->success = true;
+        res->message = "Playing loop trajectory";
+
+        status.status = REPEATING;
+
         return;
     }
 
@@ -853,6 +985,33 @@ private:
             }
         }
         return navPath;
+    }
+
+    void publishStatus()
+    {
+            
+        if (status.is_temporary && status.elapsed_time_since_last_update > TEMPORARY_STATUS_DURATION_MS)
+        {
+            status.status.ok = status.next_status.ok;
+            status.status.message = status.next_status.message;
+            status.is_temporary = false;
+            status.elapsed_time_since_last_update = 0;
+        } 
+        else if (status.is_temporary)
+        {
+            status.elapsed_time_since_last_update += STATUS_TIMER_PERIOD_MS;
+        }
+
+        status.status.header.stamp = this->now();
+        statusPublisher->publish(status.status);
+    }
+
+    void setTemporaryStatus(bool ok, std::string message)
+    {
+        status.next_status = status.status;
+        status.status.ok = ok;
+        status.status.message = message;
+        status.is_temporary = true;
     }
 };
 
