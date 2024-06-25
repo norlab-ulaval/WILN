@@ -351,10 +351,15 @@ private:
         if(trajectory_result.code == rclcpp_action::ResultCode::SUCCEEDED)
         {
             RCLCPP_WARN(this->get_logger(), "Successfully reached goal!");
+
+            status.status = IDLE;
         }
         else
         {
             RCLCPP_WARN_STREAM(this->get_logger(), "Trajectory goal was not reached.");
+
+            status.status = IDLE;
+            setTemporaryStatus(false, "Trajectory goal was not reached.");
         }
     }
 
