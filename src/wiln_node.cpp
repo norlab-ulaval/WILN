@@ -27,8 +27,7 @@ tf2::Quaternion HALF_TURN_ROTATION(0.0, 0.0, 1.0, 0.0);
 class WilnNode : public rclcpp::Node
 {
 public:
-    WilnNode():
-            Node("wiln_node")
+    WilnNode() : Node("wiln_node")
     {
         using FollowPath = norlab_controllers_msgs::action::FollowPath;
 
@@ -75,22 +74,25 @@ public:
         odomSubscription = this->create_subscription<nav_msgs::msg::Odometry>("odom_in", 1000,
                                                                               std::bind(&WilnNode::odomCallback, this,
                                                                                         std::placeholders::_1));
-        commandedVelocitySubscription = this->create_subscription<geometry_msgs::msg::TwistStamped>("cmd_vel_in", 1000,
-                                                                                             std::bind(&WilnNode::commandVelocityCallback, this,
-                                                                                                       std::placeholders::_1));
+        // commandedVelocitySubscription = this->create_subscription<geometry_msgs::msg::TwistStamped>("cmd_vel_in", 1000,
+        //                                                                                             std::bind(&WilnNode::commandVelocityCallback, this,
+        //                                                                                                       std::placeholders::_1));
         plannedTrajectorySubscription = this->create_subscription<geometry_msgs::msg::PoseStamped>("pose_in", 1000,
                                                                                                    std::bind(&WilnNode::plannedTrajectoryCallback, this,
                                                                                                              std::placeholders::_1));
         realTrajectorySubscription = this->create_subscription<geometry_msgs::msg::PoseStamped>("pose_in", 1000,
                                                                                                 std::bind(&WilnNode::realTrajectoryCallback, this,
                                                                                                           std::placeholders::_1));
-//        trajectoryResultSubscription = this->create_subscription<norlab_controllers_msgs::action::FollowPath::Result>("follow_path/result", 1000,
-//                                                                                                std::bind(&WilnNode::trajectoryResultCallback, this,
-//                                                                                                          std::placeholders::_1));
+        //        trajectoryResultSubscription = this->create_subscription<norlab_controllers_msgs::action::FollowPath::Result>("follow_path/result", 1000,
+        //                                                                                                std::bind(&WilnNode::trajectoryResultCallback, this,
+        //                                                                                                          std::placeholders::_1));
+
         auto publisher_qos = rclcpp::QoS(10);
         publisher_qos.transient_local();
         plannedTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("planned_trajectory", publisher_qos);
         realTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("real_trajectory", publisher_qos);
+
+        minDistanceBetweenWaypoints = this->declare_parameter("min_distance_between_waypoints", 0.05);
 
         drivingForward.store(true);
         lastDrivingDirection.store(true);
@@ -122,26 +124,25 @@ private:
     rclcpp::Client<norlab_icp_mapper_ros::srv::LoadMap>::SharedPtr loadMapClient;
     std::atomic_bool lastDrivingDirection;
 
-    const int FRAME_ID_START_POSITION = 11; // length of string : "frame_id : "
-
-    const std::string TRAJECTORY_DELIMITER = "#############################";
-    float delayBetweenWaypoints;
+    const int FRAME_ID_START_POSITION = 11;                                   // length of string : "frame_id : "
+    const std::string TRAJECTORY_DELIMITER = "#############################"; // Do not change this.
+    double minDistanceBetweenWaypoints;
 
     float trajectorySpeed;
     int lowPassFilterWindowSize;
 
     //    const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
-//            { 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
-//            { 1u, "RESULT_STATUS_UNKNOWN" },
-//            { 2u, "RESULT_STATUS_OBSTACLE" },
-//            { 3u, "RESULT_STATUS_SUCCESS" },
-//            { 4u, "RESULT_STATUS_ABORTED" },
-//            { 5u, "RESULT_STATUS_INTERNAL_ERROR" },
-//            { 6u, "RESULT_STATUS_SLAM_FAIL" },
-//            { 7u, "RESULT_STATUS_TF_FAIL" },
-//            { 8u, "RESULT_STATUS_PATH_LOST" },
-//            { 9u, "RESULT_STATUS_TIMEOUT" },
-//    };
+    //            { 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
+    //            { 1u, "RESULT_STATUS_UNKNOWN" },
+    //            { 2u, "RESULT_STATUS_OBSTACLE" },
+    //            { 3u, "RESULT_STATUS_SUCCESS" },
+    //            { 4u, "RESULT_STATUS_ABORTED" },
+    //            { 5u, "RESULT_STATUS_INTERNAL_ERROR" },
+    //            { 6u, "RESULT_STATUS_SLAM_FAIL" },
+    //            { 7u, "RESULT_STATUS_TF_FAIL" },
+    //            { 8u, "RESULT_STATUS_PATH_LOST" },
+    //            { 9u, "RESULT_STATUS_TIMEOUT" },
+    //    };
 
     rclcpp_action::Client<norlab_controllers_msgs::action::FollowPath>::SharedPtr followPathClient;
 
@@ -149,45 +150,44 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr commandedVelocitySubscription;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr plannedTrajectorySubscription;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr realTrajectorySubscription;
-//    rclcpp::Subscription<norlab_controllers_msgs::action::FollowPath::Result>::SharedPtr trajectoryResultSubscription;
-
+    //    rclcpp::Subscription<norlab_controllers_msgs::action::FollowPath::Result>::SharedPtr trajectoryResultSubscription;
 
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr plannedTrajectoryPublisher;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr realTrajectoryPublisher;
 
-    void odomCallback(const nav_msgs::msg::Odometry& odomIn)
+    void odomCallback(const nav_msgs::msg::Odometry &odomIn)
     {
         robotPoseLock.lock();
         robotPose = odomIn.pose.pose;
         robotPoseLock.unlock();
     }
 
-    void commandVelocityCallback(const geometry_msgs::msg::TwistStamped& commandedVelocity)
+    void commandVelocityCallback(const geometry_msgs::msg::TwistStamped &commandedVelocity)
     {
         drivingForward.store(commandedVelocity.twist.linear.x >= 0.0);
     }
 
-    float computeAngleBetweenPoses(const geometry_msgs::msg::PoseStamped& firstPose, const geometry_msgs::msg::PoseStamped& secondPose)
+    float computeAngleBetweenPoses(const geometry_msgs::msg::PoseStamped &firstPose, const geometry_msgs::msg::PoseStamped &secondPose)
     {
         float firstPoseAngle = extractYawFromQuaternion(firstPose.pose.orientation);
         float secondPoseAngle = extractYawFromQuaternion(secondPose.pose.orientation);
         float pathAngle = secondPoseAngle - firstPoseAngle;
-        if(pathAngle > M_PI)
+        if (pathAngle > M_PI)
         {
             pathAngle -= 2.0 * M_PI;
         }
-        else if(pathAngle < -M_PI)
+        else if (pathAngle < -M_PI)
         {
             pathAngle += 2 * M_PI;
         }
         return pathAngle;
     }
 
-    void plannedTrajectoryCallback(const geometry_msgs::msg::PoseStamped& poseStamped)
+    void plannedTrajectoryCallback(const geometry_msgs::msg::PoseStamped &poseStamped)
     {
-        if(recording)
+        if (recording)
         {
-            if(plannedTrajectory.paths.empty())
+            if (plannedTrajectory.paths.empty())
             {
                 plannedTrajectory.header.frame_id = poseStamped.header.frame_id;
                 plannedTrajectory.header.stamp = this->now();
@@ -199,35 +199,35 @@ private:
                 plannedTrajectory.paths.push_back(directionalPath);
                 publishPlannedTrajectory();
             }
-            else if(std::fabs(computeAngleBetweenPoses(plannedTrajectory.paths.back().poses.back(), poseStamped)) > 0.5)
-            {
-                norlab_controllers_msgs::msg::DirectionalPath directionalPath;
-                directionalPath.header.frame_id = poseStamped.header.frame_id;
-                directionalPath.header.stamp = this->now();
-                directionalPath.forward = drivingForward.load();
-                geometry_msgs::msg::PoseStamped rotatedPose = poseStamped;
-                rotatedPose.pose.position = plannedTrajectory.paths.back().poses.back().pose.position;
-                directionalPath.poses.push_back(rotatedPose);
-                plannedTrajectory.paths.push_back(directionalPath);
-                publishPlannedTrajectory();
-            }
-            else if(lastDrivingDirection.load() != drivingForward.load())
-            {
-                norlab_controllers_msgs::msg::DirectionalPath directionalPath;
-                directionalPath.header.frame_id = poseStamped.header.frame_id;
-                directionalPath.header.stamp = this->now();
-                directionalPath.forward = drivingForward.load();
-                directionalPath.poses.push_back(poseStamped);
-                plannedTrajectory.paths.push_back(directionalPath);
-                publishPlannedTrajectory();
-            }
+            // else if (std::fabs(computeAngleBetweenPoses(plannedTrajectory.paths.back().poses.back(), poseStamped)) > 0.5)
+            // {
+            //     norlab_controllers_msgs::msg::DirectionalPath directionalPath;
+            //     directionalPath.header.frame_id = poseStamped.header.frame_id;
+            //     directionalPath.header.stamp = this->now();
+            //     directionalPath.forward = drivingForward.load();
+            //     geometry_msgs::msg::PoseStamped rotatedPose = poseStamped;
+            //     rotatedPose.pose.position = plannedTrajectory.paths.back().poses.back().pose.position;
+            //     directionalPath.poses.push_back(rotatedPose);
+            //     plannedTrajectory.paths.push_back(directionalPath);
+            //     publishPlannedTrajectory();
+            // }
+            // else if (lastDrivingDirection.load() != drivingForward.load())
+            // {
+            //     norlab_controllers_msgs::msg::DirectionalPath directionalPath;
+            //     directionalPath.header.frame_id = poseStamped.header.frame_id;
+            //     directionalPath.header.stamp = this->now();
+            //     directionalPath.forward = drivingForward.load();
+            //     directionalPath.poses.push_back(poseStamped);
+            //     plannedTrajectory.paths.push_back(directionalPath);
+            //     publishPlannedTrajectory();
+            // }
             else
             {
                 geometry_msgs::msg::PoseStamped lastPose = plannedTrajectory.paths.back().poses.back();
                 double distance = std::sqrt(std::pow(poseStamped.pose.position.x - lastPose.pose.position.x, 2) +
                                             std::pow(poseStamped.pose.position.y - lastPose.pose.position.y, 2) +
                                             std::pow(poseStamped.pose.position.z - lastPose.pose.position.z, 2));
-                if(distance >= 0.05)
+                if (distance >= minDistanceBetweenWaypoints)
                 {
                     plannedTrajectory.paths.back().poses.push_back(poseStamped);
                     publishPlannedTrajectory();
@@ -237,11 +237,11 @@ private:
         }
     }
 
-    void realTrajectoryCallback(const geometry_msgs::msg::PoseStamped& poseStamped)
+    void realTrajectoryCallback(const geometry_msgs::msg::PoseStamped &poseStamped)
     {
-        if(playing)
+        if (playing)
         {
-            if(realTrajectory.paths.empty())
+            if (realTrajectory.paths.empty())
             {
                 realTrajectory.header.frame_id = poseStamped.header.frame_id;
                 realTrajectory.header.stamp = this->now();
@@ -253,19 +253,19 @@ private:
                 realTrajectory.paths.push_back(directionalPath);
                 publishRealTrajectory();
             }
-//            else if(std::fabs(computeAngleBetweenPoses(realTrajectory.paths.back().poses.back(), poseStamped)) > 0.5)
-//            {
-//                norlab_controllers_msgs::msg::DirectionalPath directionalPath;
-//                directionalPath.header.frame_id = poseStamped.header.frame_id;
-//                directionalPath.header.stamp = this->now();
-//                directionalPath.forward = drivingForward.load();
-//                geometry_msgs::msg::PoseStamped rotatedPose = poseStamped;
-//                rotatedPose.pose.position = realTrajectory.paths.back().poses.back().pose.position;
-//                directionalPath.poses.push_back(rotatedPose);
-//                realTrajectory.paths.push_back(directionalPath);
-//                publishRealTrajectory();
-//            }
-            else if(lastDrivingDirection.load() != drivingForward.load())
+            //            else if(std::fabs(computeAngleBetweenPoses(realTrajectory.paths.back().poses.back(), poseStamped)) > 0.5)
+            //            {
+            //                norlab_controllers_msgs::msg::DirectionalPath directionalPath;
+            //                directionalPath.header.frame_id = poseStamped.header.frame_id;
+            //                directionalPath.header.stamp = this->now();
+            //                directionalPath.forward = drivingForward.load();
+            //                geometry_msgs::msg::PoseStamped rotatedPose = poseStamped;
+            //                rotatedPose.pose.position = realTrajectory.paths.back().poses.back().pose.position;
+            //                directionalPath.poses.push_back(rotatedPose);
+            //                realTrajectory.paths.push_back(directionalPath);
+            //                publishRealTrajectory();
+            //            }
+            else if (lastDrivingDirection.load() != drivingForward.load())
             {
                 norlab_controllers_msgs::msg::DirectionalPath directionalPath;
                 directionalPath.header.frame_id = poseStamped.header.frame_id;
@@ -281,7 +281,7 @@ private:
                 double distance = std::sqrt(std::pow(poseStamped.pose.position.x - lastPose.pose.position.x, 2) +
                                             std::pow(poseStamped.pose.position.y - lastPose.pose.position.y, 2) +
                                             std::pow(poseStamped.pose.position.z - lastPose.pose.position.z, 2));
-                if(distance >= 0.05)
+                if (distance >= 0.05)
                 {
                     realTrajectory.paths.back().poses.push_back(poseStamped);
                     publishRealTrajectory();
@@ -291,9 +291,9 @@ private:
         }
     }
 
-    void goalResponseCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::SharedPtr& trajectoryGoalHandle)
+    void goalResponseCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::SharedPtr &trajectoryGoalHandle)
     {
-        if(!trajectoryGoalHandle)
+        if (!trajectoryGoalHandle)
         {
             RCLCPP_ERROR(this->get_logger(), "Goal was rejected by server");
         }
@@ -306,17 +306,17 @@ private:
     void trajectoryFeedbackCallback(rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::SharedPtr,
                                     const std::shared_ptr<const norlab_controllers_msgs::action::FollowPath::Feedback> feedback)
     {
-        //TODO: program feedback callback
+        // TODO: program feedback callback
         return;
     }
 
-    void trajectoryResultCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::WrappedResult& trajectory_result)
+    void trajectoryResultCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::WrappedResult &trajectory_result)
     {
         playing = false;
 
         RCLCPP_WARN(this->get_logger(), "i got in trajectory_result_callback");
 
-        if(trajectory_result.code == rclcpp_action::ResultCode::SUCCEEDED)
+        if (trajectory_result.code == rclcpp_action::ResultCode::SUCCEEDED)
         {
             RCLCPP_WARN(this->get_logger(), "Successfully reached goal!");
         }
@@ -328,13 +328,13 @@ private:
 
     void startRecordingServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
-        if(recording)
+        if (recording)
         {
             RCLCPP_WARN(this->get_logger(), "Trajectory is already being recorded.");
             return;
         }
 
-        if(playing)
+        if (playing)
         {
             RCLCPP_WARN(this->get_logger(), "Cannot start recording, trajectory is currently being played.");
             return;
@@ -347,18 +347,18 @@ private:
         return;
     }
 
-    norlab_controllers_msgs::msg::PathSequence smoothTrajectoryLowPass(const norlab_controllers_msgs::msg::PathSequence& roughTrajectory)
+    norlab_controllers_msgs::msg::PathSequence smoothTrajectoryLowPass(const norlab_controllers_msgs::msg::PathSequence &roughTrajectory)
     {
         norlab_controllers_msgs::msg::PathSequence smoothTrajectory(roughTrajectory);
 
-        for(int i = 0; i < roughTrajectory.paths.size(); ++i)
+        for (int i = 0; i < roughTrajectory.paths.size(); ++i)
         {
-            for(int j = lowPassFilterWindowSize; j < roughTrajectory.paths[i].poses.size() - lowPassFilterWindowSize; ++j)
+            for (int j = lowPassFilterWindowSize; j < roughTrajectory.paths[i].poses.size() - lowPassFilterWindowSize; ++j)
             {
                 double windowNeighborSumX = 0;
                 double windowNeighborSumY = 0;
                 double windowNeighborSumZ = 0;
-                for(int k = j - lowPassFilterWindowSize; k < j + lowPassFilterWindowSize + 1; ++k)
+                for (int k = j - lowPassFilterWindowSize; k < j + lowPassFilterWindowSize + 1; ++k)
                 {
                     windowNeighborSumX += roughTrajectory.paths[i].poses[k].pose.position.x;
                     windowNeighborSumY += roughTrajectory.paths[i].poses[k].pose.position.y;
@@ -369,7 +369,7 @@ private:
                 smoothTrajectory.paths[i].poses[j].pose.position.z = windowNeighborSumZ / ((2 * lowPassFilterWindowSize) + 1);
             }
         }
-        for(int i = 0; i < lowPassFilterWindowSize; ++i)
+        for (int i = 0; i < lowPassFilterWindowSize; ++i)
         {
             smoothTrajectory.paths.front().poses.erase(smoothTrajectory.paths.front().poses.begin());
             smoothTrajectory.paths.back().poses.erase(smoothTrajectory.paths.back().poses.end() - 1);
@@ -380,7 +380,7 @@ private:
 
     void stopRecordingServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
-        if(!recording)
+        if (!recording)
         {
             RCLCPP_WARN(this->get_logger(), "Trajectory is already not being recorded.");
             return;
@@ -404,7 +404,7 @@ private:
 
     void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
-        if(!playing)
+        if (!playing)
         {
             RCLCPP_WARN(this->get_logger(), "Cannot cancel trajectory, no trajectory is being played.");
             return;
@@ -417,28 +417,28 @@ private:
         return;
     }
 
-    double computeEuclideanDistanceBetweenPoses(const geometry_msgs::msg::Pose& firstPose, const geometry_msgs::msg::Pose& secondPose)
+    double computeEuclideanDistanceBetweenPoses(const geometry_msgs::msg::Pose &firstPose, const geometry_msgs::msg::Pose &secondPose)
     {
         return sqrt(pow(firstPose.position.x - secondPose.position.x, 2) +
                     pow(firstPose.position.y - secondPose.position.y, 2) +
                     pow(firstPose.position.z - secondPose.position.z, 2));
     }
 
-    double extractYawFromQuaternion(const geometry_msgs::msg::Quaternion& quaternion)
+    double extractYawFromQuaternion(const geometry_msgs::msg::Quaternion &quaternion)
     {
         return std::atan2(2.0f * (quaternion.w * quaternion.z + quaternion.x * quaternion.y),
                           quaternion.w * quaternion.w + quaternion.x * quaternion.x - quaternion.y * quaternion.y - quaternion.z * quaternion.z);
     }
 
-    double computeTrajectoryYaw(const norlab_controllers_msgs::msg::PathSequence& trajectory, const geometry_msgs::msg::Pose& pose)
+    double computeTrajectoryYaw(const norlab_controllers_msgs::msg::PathSequence &trajectory, const geometry_msgs::msg::Pose &pose)
     {
         double dx = 0;
         double dy = 0;
         int pathIndex = 0;
-        while(std::sqrt(std::pow(dx, 2) + std::pow(dy, 2)) < 1.0 && pathIndex < trajectory.paths.size())
+        while (std::sqrt(std::pow(dx, 2) + std::pow(dy, 2)) < 1.0 && pathIndex < trajectory.paths.size())
         {
             int poseIndex = 0;
-            while(std::sqrt(std::pow(dx, 2) + std::pow(dy, 2)) < 1.0 && poseIndex < trajectory.paths[pathIndex].poses.size())
+            while (std::sqrt(std::pow(dx, 2) + std::pow(dy, 2)) < 1.0 && poseIndex < trajectory.paths[pathIndex].poses.size())
             {
                 dx = trajectory.paths[pathIndex].poses[poseIndex].pose.position.x - pose.position.x;
                 dy = trajectory.paths[pathIndex].poses[poseIndex].pose.position.y - pose.position.y;
@@ -451,13 +451,13 @@ private:
 
     void saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln::srv::SaveMapTraj::Response> res)
     {
-        //TODO: force save to same working repository as mapper
+        // TODO: force save to same working repository as mapper
         using namespace std::chrono_literals;
         auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
         std::string mapName = req->file_name.data.substr(0, req->file_name.data.rfind('.')) + ".vtk";
         saveMapRequest->map_file_name.data = mapName;
-//        auto saveMapFuture = saveMapClient->async_send_request(saveMapRequest);
-//        std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> request = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
+        //        auto saveMapFuture = saveMapClient->async_send_request(saveMapRequest);
+        //        std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> request = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
         RCLCPP_INFO(this->get_logger(), "calling /save_map");
         norlab_icp_mapper_ros::srv::SaveMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::SaveMap>("save_map", saveMapRequest);
         RCLCPP_INFO(this->get_logger(), "/save_map done");
@@ -468,9 +468,9 @@ private:
         ltrFile << TRAJECTORY_DELIMITER << std::endl;
         ltrFile << "frame_id : " << plannedTrajectory.paths.front().poses.front().header.frame_id << std::endl;
 
-        for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
+        for (int i = 0; i < plannedTrajectory.paths.size(); ++i)
         {
-            for(int j = 0; j < plannedTrajectory.paths[i].poses.size(); ++j)
+            for (int j = 0; j < plannedTrajectory.paths[i].poses.size(); ++j)
             {
                 ltrFile << plannedTrajectory.paths[i].poses[j].pose.position.x << ","
                         << plannedTrajectory.paths[i].poses[j].pose.position.y << ","
@@ -480,7 +480,7 @@ private:
                         << plannedTrajectory.paths[i].poses[j].pose.orientation.z << ","
                         << plannedTrajectory.paths[i].poses[j].pose.orientation.w << std::endl;
             }
-            if(i != plannedTrajectory.paths.size() - 1)
+            if (i != plannedTrajectory.paths.size() - 1)
             {
                 ltrFile << "changing direction" << std::endl;
             }
@@ -499,11 +499,11 @@ private:
         std::string line;
         std::string pathFrameId;
         bool parsingMap = true;
-        while(std::getline(ltrFile, line))
+        while (std::getline(ltrFile, line))
         {
-            if(parsingMap)
+            if (parsingMap)
             {
-                if(line.find(TRAJECTORY_DELIMITER) != std::string::npos)
+                if (line.find(TRAJECTORY_DELIMITER) != std::string::npos)
                 {
                     std::getline(ltrFile, line);
                     pathFrameId = line.substr(FRAME_ID_START_POSITION);
@@ -518,7 +518,7 @@ private:
             }
             else
             {
-                if(plannedTrajectory.paths.empty())
+                if (plannedTrajectory.paths.empty())
                 {
                     norlab_controllers_msgs::msg::DirectionalPath directionalPath;
                     directionalPath.header.frame_id = pathFrameId;
@@ -527,7 +527,7 @@ private:
                     plannedTrajectory.paths.push_back(directionalPath);
                 }
 
-                if(line.find("changing direction") != std::string::npos)
+                if (line.find("changing direction") != std::string::npos)
                 {
                     norlab_controllers_msgs::msg::DirectionalPath directionalPath;
                     directionalPath.header.frame_id = pathFrameId;
@@ -572,7 +572,7 @@ private:
 
         int pathIndex;
         int poseIndex;
-        if(!fromEnd)
+        if (!fromEnd)
         {
             pathIndex = 0;
             poseIndex = 0;
@@ -592,7 +592,7 @@ private:
         loadMapRequest->pose.orientation.w = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.w;
         loadMapClient->async_send_request(loadMapRequest);
 
-//        auto loadMapFuture = loadMapClient->async_send_request(loadMapRequest);
+        //        auto loadMapFuture = loadMapClient->async_send_request(loadMapRequest);
         RCLCPP_INFO(this->get_logger(), "calling /load_map");
         norlab_icp_mapper_ros::srv::LoadMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::LoadMap>("load_map", loadMapRequest);
         RCLCPP_INFO(this->get_logger(), "/load_map done");
@@ -628,19 +628,19 @@ private:
 
     void playLineTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
-        if(playing)
+        if (playing)
         {
             RCLCPP_WARN(this->get_logger(), "Trajectory is already being played.");
             return;
         }
 
-        if(recording)
+        if (recording)
         {
             RCLCPP_WARN(this->get_logger(), "Cannot play trajectory while recording.");
             return;
         }
 
-        if(plannedTrajectory.paths.empty() || plannedTrajectory.paths.front().poses.empty())
+        if (plannedTrajectory.paths.empty() || plannedTrajectory.paths.front().poses.empty())
         {
             RCLCPP_WARN(this->get_logger(), "Cannot play an empty trajectory.");
             return;
@@ -653,18 +653,19 @@ private:
         double robotPoseToTrajectoryStartDistance = computeEuclideanDistanceBetweenPoses(robotPose, trajectory.paths.front().poses.front().pose);
         double robotPoseToTrajectoryEndDistance = computeEuclideanDistanceBetweenPoses(robotPose, trajectory.paths.back().poses.back().pose);
 
-        RCLCPP_INFO_STREAM(this->get_logger(), "distance to start "<<robotPoseToTrajectoryStartDistance);
-        RCLCPP_INFO_STREAM(this->get_logger(), "distance to end "<<robotPoseToTrajectoryEndDistance);
+        RCLCPP_INFO_STREAM(this->get_logger(), "distance to start " << robotPoseToTrajectoryStartDistance);
+        RCLCPP_INFO_STREAM(this->get_logger(), "distance to end " << robotPoseToTrajectoryEndDistance);
 
-        if(robotPoseToTrajectoryEndDistance < robotPoseToTrajectoryStartDistance)
+        // TODO: Method to reverse path (plus orientation)
+        if (robotPoseToTrajectoryEndDistance < robotPoseToTrajectoryStartDistance)
         {
             tf2::Quaternion robotOrientation;
 
             std::reverse(trajectory.paths.begin(), trajectory.paths.end());
-            for(int i = 0; i < trajectory.paths.size(); ++i)
+            for (int i = 0; i < trajectory.paths.size(); ++i)
             {
                 std::reverse(trajectory.paths[i].poses.begin(), trajectory.paths[i].poses.end());
-                for(int j = 0; j < trajectory.paths[i].poses.size(); ++j)
+                for (int j = 0; j < trajectory.paths[i].poses.size(); ++j)
                 {
                     tf2::fromMsg(trajectory.paths[i].poses[j].pose.orientation, robotOrientation);
                     trajectory.paths[i].poses[j].pose.orientation = tf2::toMsg((HALF_TURN_ROTATION * robotOrientation).normalized());
@@ -675,19 +676,19 @@ private:
         double robotPoseYaw = extractYawFromQuaternion(robotPose.orientation);
         double trajectoryStartYaw = computeTrajectoryYaw(trajectory, robotPose);
         double angleDistance = std::fabs(trajectoryStartYaw - robotPoseYaw);
-        if(angleDistance > M_PI)
+        if (angleDistance > M_PI)
         {
             angleDistance = (2 * M_PI) - angleDistance;
         }
 
-        if(angleDistance > M_PI_2)
+        if (angleDistance > M_PI_2)
         {
             tf2::Quaternion robotOrientation;
 
-            for(int i = 0; i < trajectory.paths.size(); ++i)
+            for (int i = 0; i < trajectory.paths.size(); ++i)
             {
                 trajectory.paths[i].forward = !plannedTrajectory.paths[i].forward;
-                for(int j = 0; j < trajectory.paths[i].poses.size(); ++j)
+                for (int j = 0; j < trajectory.paths[i].poses.size(); ++j)
                 {
                     tf2::fromMsg(trajectory.paths[i].poses[j].pose.orientation, robotOrientation);
                     trajectory.paths[i].poses[j].pose.orientation = tf2::toMsg((HALF_TURN_ROTATION * robotOrientation).normalized());
@@ -713,11 +714,11 @@ private:
 
         auto send_goal_options = rclcpp_action::Client<norlab_controllers_msgs::action::FollowPath>::SendGoalOptions();
         send_goal_options.goal_response_callback =
-                std::bind(&WilnNode::goalResponseCallback, this, std::placeholders::_1);
+            std::bind(&WilnNode::goalResponseCallback, this, std::placeholders::_1);
         send_goal_options.feedback_callback =
-                std::bind(&WilnNode::trajectoryFeedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
+            std::bind(&WilnNode::trajectoryFeedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
         send_goal_options.result_callback =
-                std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
+            std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
         followPathClient->async_send_goal(goal_msg, send_goal_options);
 
         return;
@@ -725,19 +726,19 @@ private:
 
     void playLoopTrajectoryServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop::Request> req, std::shared_ptr<wiln::srv::PlayLoop::Response> res)
     {
-        if(playing)
+        if (playing)
         {
             RCLCPP_WARN(this->get_logger(), "Trajectory is already being played.");
             return;
         }
 
-        if(recording)
+        if (recording)
         {
             RCLCPP_WARN(this->get_logger(), "Cannot play trajectory while recording.");
             return;
         }
 
-        if(plannedTrajectory.paths.empty())
+        if (plannedTrajectory.paths.empty())
         {
             RCLCPP_WARN(this->get_logger(), "Cannot play an empty trajectory.");
             return;
@@ -745,27 +746,29 @@ private:
 
         norlab_controllers_msgs::msg::PathSequence cutLoopTrajectory = plannedTrajectory;
         int poseIndex = cutLoopTrajectory.paths.back().poses.size() - 1;
-        while(poseIndex >= 1 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses[poseIndex - 1].pose, cutLoopTrajectory.paths.front().poses.front().pose) <
-                                computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses[poseIndex].pose, cutLoopTrajectory.paths.front().poses.front().pose))
+        // remove overlap
+        while (poseIndex >= 1 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses[poseIndex - 1].pose, cutLoopTrajectory.paths.front().poses.front().pose) <
+                                     computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses[poseIndex].pose, cutLoopTrajectory.paths.front().poses.front().pose))
         {
             cutLoopTrajectory.paths.back().poses.erase(cutLoopTrajectory.paths.back().poses.begin() + poseIndex);
             --poseIndex;
         }
+
         norlab_controllers_msgs::msg::PathSequence firstLoopTrajectory = cutLoopTrajectory;
-        while(firstLoopTrajectory.paths.front().poses.size() > 0 &&
-              computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses.back().pose, firstLoopTrajectory.paths.back().poses.back().pose) < 1.0)
+        while (firstLoopTrajectory.paths.front().poses.size() > 0 &&
+               computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses.back().pose, firstLoopTrajectory.paths.back().poses.back().pose) < 1.0)
         {
             firstLoopTrajectory.paths.front().poses.erase(firstLoopTrajectory.paths.back().poses.end() - 1);
         }
         norlab_controllers_msgs::msg::PathSequence lastLoopTrajectory = cutLoopTrajectory;
-        while(lastLoopTrajectory.paths.front().poses.size() > 0 &&
-              computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.front().poses.front().pose, lastLoopTrajectory.paths.front().poses.front().pose) < 1.0)
+        while (lastLoopTrajectory.paths.front().poses.size() > 0 &&
+               computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.front().poses.front().pose, lastLoopTrajectory.paths.front().poses.front().pose) < 1.0)
         {
             lastLoopTrajectory.paths.front().poses.erase(lastLoopTrajectory.paths.front().poses.begin());
         }
         norlab_controllers_msgs::msg::PathSequence middleLoopTrajectory = firstLoopTrajectory;
-        while(middleLoopTrajectory.paths.front().poses.size() > 0 &&
-              computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.front().poses.front().pose, middleLoopTrajectory.paths.front().poses.front().pose) < 1.0)
+        while (middleLoopTrajectory.paths.front().poses.size() > 0 &&
+               computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.front().poses.front().pose, middleLoopTrajectory.paths.front().poses.front().pose) < 1.0)
         {
             middleLoopTrajectory.paths.front().poses.erase(middleLoopTrajectory.paths.front().poses.begin());
         }
@@ -783,11 +786,11 @@ private:
         goal_msg.follower_options.velocity.data = trajectorySpeed;
         goal_msg.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
         goal_msg.path.header.stamp = this->now();
-        for(int i = 0; i < firstLoopTrajectory.paths.size(); ++i)
+        for (int i = 0; i < firstLoopTrajectory.paths.size(); ++i)
         {
-            if(i != 0 && firstLoopTrajectory.paths[i].forward == goal_msg.path.paths.back().forward)
+            if (i != 0 && firstLoopTrajectory.paths[i].forward == goal_msg.path.paths.back().forward)
             {
-                for(int j = 0; j < firstLoopTrajectory.paths[i].poses.size(); ++j)
+                for (int j = 0; j < firstLoopTrajectory.paths[i].poses.size(); ++j)
                 {
                     goal_msg.path.paths.back().poses.push_back(firstLoopTrajectory.paths[i].poses[j]);
                 }
@@ -797,13 +800,13 @@ private:
                 goal_msg.path.paths.push_back(firstLoopTrajectory.paths[i]);
             }
         }
-        for(int i = 1; i < req->nb_loops.data - 1; ++i)
+        for (int i = 1; i < req->nb_loops.data - 1; ++i)
         {
-            for(int j = 0; j < middleLoopTrajectory.paths.size(); ++j)
+            for (int j = 0; j < middleLoopTrajectory.paths.size(); ++j)
             {
-                if(middleLoopTrajectory.paths[j].forward == goal_msg.path.paths.back().forward)
+                if (middleLoopTrajectory.paths[j].forward == goal_msg.path.paths.back().forward)
                 {
-                    for(int k = 0; k < middleLoopTrajectory.paths[j].poses.size(); ++k)
+                    for (int k = 0; k < middleLoopTrajectory.paths[j].poses.size(); ++k)
                     {
                         goal_msg.path.paths.back().poses.push_back(middleLoopTrajectory.paths[j].poses[k]);
                     }
@@ -815,11 +818,11 @@ private:
             }
         }
 
-        for(int i = 0; i < lastLoopTrajectory.paths.size(); ++i)
+        for (int i = 0; i < lastLoopTrajectory.paths.size(); ++i)
         {
-            if(lastLoopTrajectory.paths[i].forward == goal_msg.path.paths.back().forward)
+            if (lastLoopTrajectory.paths[i].forward == goal_msg.path.paths.back().forward)
             {
-                for(int j = 0; j < lastLoopTrajectory.paths[i].poses.size(); ++j)
+                for (int j = 0; j < lastLoopTrajectory.paths[i].poses.size(); ++j)
                 {
                     goal_msg.path.paths.back().poses.push_back(lastLoopTrajectory.paths[i].poses[j]);
                 }
@@ -832,22 +835,22 @@ private:
 
         auto send_goal_options = rclcpp_action::Client<norlab_controllers_msgs::action::FollowPath>::SendGoalOptions();
         send_goal_options.goal_response_callback =
-                std::bind(&WilnNode::goalResponseCallback, this, std::placeholders::_1);
+            std::bind(&WilnNode::goalResponseCallback, this, std::placeholders::_1);
         send_goal_options.feedback_callback =
-                std::bind(&WilnNode::trajectoryFeedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
+            std::bind(&WilnNode::trajectoryFeedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
         send_goal_options.result_callback =
-                std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
+            std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
         followPathClient->async_send_goal(goal_msg);
         return;
     }
 
-    nav_msgs::msg::Path getNavPathFromPathSequence(const norlab_controllers_msgs::msg::PathSequence& pathSequence)
+    nav_msgs::msg::Path getNavPathFromPathSequence(const norlab_controllers_msgs::msg::PathSequence &pathSequence)
     {
         nav_msgs::msg::Path navPath;
         navPath.header = pathSequence.header;
-        for(const auto& path: pathSequence.paths)
+        for (const auto &path : pathSequence.paths)
         {
-            for(const geometry_msgs::msg::PoseStamped& poseStamped: path.poses)
+            for (const geometry_msgs::msg::PoseStamped &poseStamped : path.poses)
             {
                 navPath.poses.push_back(poseStamped);
             }
@@ -856,10 +859,10 @@ private:
     }
 };
 
-int main(int argc, char** argv)
+int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-//    rclcpp::spin(std::make_shared<WilnNode>());
+    //    rclcpp::spin(std::make_shared<WilnNode>());
     rclcpp::executors::MultiThreadedExecutor executor;
     auto wiln_node = std::make_shared<WilnNode>();
     executor.add_node(wiln_node);
