@@ -393,12 +393,14 @@ private:
     void clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory.paths.clear();
+        publishPlannedTrajectory();
         return;
     }
 
     void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
+        publishPlannedTrajectory();
         return;
     }
 
