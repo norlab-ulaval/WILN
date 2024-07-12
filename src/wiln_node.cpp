@@ -70,7 +70,7 @@ public:
         saveMapClient = this->create_client<norlab_icp_mapper_ros::srv::SaveMap>("save_map");
         loadMapClient = this->create_client<norlab_icp_mapper_ros::srv::LoadMap>("load_map");
 
-        followPathClient = rclcpp_action::create_client<norlab_controllers_msgs::action::FollowPath>(this, "follow_path");
+        followPathClient = rclcpp_action::create_client<norlab_controllers_msgs::action::FollowPath>(this, "/follow_path");
 
         odomSubscription = this->create_subscription<nav_msgs::msg::Odometry>("odom_in", 1000,
                                                                               std::bind(&WilnNode::odomCallback, this,
