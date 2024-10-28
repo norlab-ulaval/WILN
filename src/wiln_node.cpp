@@ -65,10 +65,10 @@ public:
                                                                             std::bind(&WilnNode::clearTrajectoryServiceCallback, this, std::placeholders::_1,
                                                                                       std::placeholders::_2));
 
-        enableMappingClient = this->create_client<std_srvs::srv::Empty>("enable_mapping");
-        disableMappingClient = this->create_client<std_srvs::srv::Empty>("disable_mapping");
-        saveMapClient = this->create_client<norlab_icp_mapper_ros::srv::SaveMap>("save_map");
-        loadMapClient = this->create_client<norlab_icp_mapper_ros::srv::LoadMap>("load_map");
+        enableMappingClient = this->create_client<std_srvs::srv::Empty>("/mapping/enable_mapping");
+        disableMappingClient = this->create_client<std_srvs::srv::Empty>("/mapping/disable_mapping");
+        saveMapClient = this->create_client<norlab_icp_mapper_ros::srv::SaveMap>("/mapping/save_map");
+        loadMapClient = this->create_client<norlab_icp_mapper_ros::srv::LoadMap>("/mapping/load_map");
 
         followPathClient = rclcpp_action::create_client<norlab_controllers_msgs::action::FollowPath>(this, "/follow_path");
 
@@ -392,6 +392,7 @@ private:
 
     void clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
+        RCLCPP_INFO(this->get_logger(), "Clearing current planned trajectory.");
         plannedTrajectory.paths.clear();
         publishPlannedTrajectory();
         return;
@@ -399,6 +400,7 @@ private:
 
     void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
+        RCLCPP_INFO(this->get_logger(), "Smoothing current planned trajectory.");
         plannedTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
         publishPlannedTrajectory();
         return;
