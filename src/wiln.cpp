@@ -265,7 +265,7 @@ void WilnNode::saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTr
     //        auto saveMapFuture = saveMapClient->async_send_request(saveMapRequest);
     //        std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> request = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
     RCLCPP_INFO(this->get_logger(), "calling /save_map");
-    norlab_icp_mapper_ros::srv::SaveMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::SaveMap>("save_map", saveMapRequest);
+    norlab_icp_mapper_ros::srv::SaveMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::SaveMap>("/mapping/save_map", saveMapRequest);
     RCLCPP_INFO(this->get_logger(), "/save_map done");
 
     std::rename(mapName.c_str(), req->file_name.data.c_str());
@@ -371,7 +371,7 @@ void WilnNode::loadLTR(std::string fileName, bool fromEnd)
 
     // auto loadMapFuture = loadMapClient->async_send_request(loadMapRequest);
     RCLCPP_INFO(this->get_logger(), "calling /load_map");
-    norlab_icp_mapper_ros::srv::LoadMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::LoadMap>("load_map", loadMapRequest);
+    norlab_icp_mapper_ros::srv::LoadMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::LoadMap>("/mapping/load_map", loadMapRequest);
     RCLCPP_INFO(this->get_logger(), "/load_map done");
 
     std::remove("/tmp/map.vtk");
