@@ -30,22 +30,32 @@ std::pair<float, float> diffBetweenPoses(const geometry_msgs::msg::Pose &pose1, 
     return std::make_pair(diff_lin, diff_ang);
 }
 
-geometry_msgs::msg::Quaternion reverseQuaternion(const geometry_msgs::msg::Quaternion &q)
-{
-    tf2::Quaternion quat(q.x, q.y, q.z, q.w);
-    tf2::Quaternion reverseQuat = quat.inverse();
-    return tf2::toMsg(reverseQuat);
-}
-
 nav_msgs::msg::Path reversePath(const nav_msgs::msg::Path &path)
 {
     nav_msgs::msg::Path reversedPath = path;
     std::reverse(reversedPath.poses.begin(), reversedPath.poses.end());
-    // for (auto &pose : reversedPath.poses)
-    // {
-    //     pose.pose.orientation = reverseQuaternion(pose.pose.orientation);
-    // }
     return reversedPath;
+}
+
+geometry_msgs::msg::Quaternion flipQuaternion(const geometry_msgs::msg::Quaternion &q)
+{
+    tf2::Quaternion quat(q.x, q.y, q.z, q.w);
+    tf2::Matrix3x3 m(quat);
+    double roll, pitch, yaw;
+    m.getRPY(roll, pitch, yaw);
+    tf2::Quaternion flippedQuat;
+    flippedQuat.setRPY(-roll, -pitch, yaw + M_PI);
+    return tf2::toMsg(flippedQuat);
+}
+
+nav_msgs::msg::Path flipPath(const nav_msgs::msg::Path &path)
+{
+    nav_msgs::msg::Path flippedPath = path;
+    for (auto &pose : flippedPath.poses)
+    {
+        pose.pose.orientation = flipQuaternion(pose.pose.orientation);
+    }
+    return flippedPath;
 }
 
 nav_msgs::msg::Path smoothPathLowPass(const nav_msgs::msg::Path &roughPath, int windowSize)

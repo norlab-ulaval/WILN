@@ -53,6 +53,9 @@ void WilnNode::initPublishers()
     plannedTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("planned_trajectory", publisher_qos);
     realTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("real_trajectory", publisher_qos);
     statePublisher = this->create_publisher<std_msgs::msg::UInt8>("state", 1);
+
+    publishPlannedTrajectory();
+    publishRealTrajectory();
 }
 
 void WilnNode::initServices()
@@ -86,6 +89,12 @@ void WilnNode::initServices()
     );
     clearTrajectoryService = this->create_service<std_srvs::srv::Empty>(
         "clear_trajectory", std::bind(&WilnNode::clearTrajectoryServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
+    );
+    reverseTrajectoryService = this->create_service<std_srvs::srv::Empty>(
+        "reverse_trajectory", std::bind(&WilnNode::reverseTrajectoryServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
+    );
+    flipTrajectoryService = this->create_service<std_srvs::srv::Empty>(
+        "flip_trajectory", std::bind(&WilnNode::flipTrajectoryServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
 }
 
@@ -219,9 +228,74 @@ void WilnNode::stopRecordingServiceCallback(const std::shared_ptr<std_srvs::srv:
 
 void WilnNode::clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
 {
-    RCLCPP_INFO(this->get_logger(), "Clearing trajectory.");
-    plannedTrajectory.poses.clear();
-    publishPlannedTrajectory();
+    switch (currentState)
+    {   
+        case State::IDLE:
+        {
+            RCLCPP_INFO(this->get_logger(), "Clearing trajectory.");
+            plannedTrajectory.poses.clear();
+            publishPlannedTrajectory();
+            break;
+        }
+        case State::RECORDING:
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot clear trajectory while recording.");
+            break;
+        }
+        case State::PLAYING:
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot clear trajectory while playing.");
+            break;
+        }
+    }
+}
+
+void WilnNode::reverseTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+{
+    switch (currentState)
+    {   
+        case State::IDLE:
+        {
+            RCLCPP_INFO(this->get_logger(), "Reversing trajectory.");
+            plannedTrajectory = reversePath(plannedTrajectory);
+            publishPlannedTrajectory();
+            break;
+        }
+        case State::RECORDING:
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot reverse trajectory while recording.");
+            break;
+        }
+        case State::PLAYING:
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot reverse trajectory while playing.");
+            break;
+        }
+    }
+}
+
+void WilnNode::flipTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+{
+    switch (currentState)
+    {   
+        case State::IDLE:
+        {
+            RCLCPP_INFO(this->get_logger(), "Flipping trajectory.");
+            plannedTrajectory = flipPath(plannedTrajectory);
+            publishPlannedTrajectory();
+            break;
+        }
+        case State::RECORDING:
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot flip trajectory while recording.");
+            break;
+        }
+        case State::PLAYING:
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot flip trajectory while playing.");
+            break;
+        }
+    }
 }
 
 void WilnNode::smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
@@ -291,12 +365,18 @@ void WilnNode::saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTr
 
 void WilnNode::loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
 {
+	auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+	disableMappingClient->async_send_request(disableMappingRequest);
+	RCLCPP_INFO(this->get_logger(), "Disabled mapping before loading the LTR file");
     loadLTR(req->file_name.data, false);
     return;
 }
 
 void WilnNode::loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
 {
+	auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+	disableMappingClient->async_send_request(disableMappingRequest);
+	RCLCPP_INFO(this->get_logger(), "Disabled mapping before loading the LTR file");
     loadLTR(req->file_name.data, true);
     return;
 }
@@ -408,6 +488,7 @@ void WilnNode::playLineServiceCallback(const std::shared_ptr<std_srvs::srv::Empt
     {
         case State::IDLE:
         {
+            RCLCPP_WARN(this->get_logger(), "Playing line.");
             playLine();
             currentState = State::PLAYING;
             break;
@@ -432,19 +513,30 @@ void WilnNode::playLine()
 
     auto [lin_dist_start, ang_dist_start] = diffBetweenPoses(robotPose.pose, lineTrajectory.poses.front().pose);
     auto [lin_dist_end, ang_dist_end] = diffBetweenPoses(robotPose.pose, lineTrajectory.poses.back().pose);
-    RCLCPP_INFO(this->get_logger(), "Distance from start: %f", lin_dist_start);
-    RCLCPP_INFO(this->get_logger(), "Distance from end: %f", lin_dist_end);
+    RCLCPP_INFO(this->get_logger(), " -> Distance from start: %f", lin_dist_start);
+    RCLCPP_INFO(this->get_logger(), " -> Distance from end: %f", lin_dist_end);
 
     // Reverse trajectory if robot is closer to end
-    if (lin_dist_end < lin_dist_start)
+    if (lin_dist_end < lin_dist_start + 2.0)
     {
         RCLCPP_INFO(this->get_logger(), "Reversing trajectory.");
         lineTrajectory = reversePath(lineTrajectory);
     }
 
+    // Flip trajectory if angle_diff is larger than M_PI/2
+    auto [lin_dist_final, ang_dist_final] = diffBetweenPoses(robotPose.pose, lineTrajectory.poses.front().pose);
+    RCLCPP_INFO(this->get_logger(), " -> Angle error: %f", ang_dist_final);
+    if (std::fabs(ang_dist_final) > M_PI/2)
+    {
+        RCLCPP_INFO(this->get_logger(), "Flipping trajectory.");
+        lineTrajectory = flipPath(lineTrajectory);
+    }
+
     robotPoseLock.unlock();
     realTrajectory.poses.clear();
 
+    plannedTrajectory = lineTrajectory;
+    publishPlannedTrajectory();
     sendFollowPathAction(lineTrajectory);
 }
 

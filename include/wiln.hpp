@@ -54,6 +54,8 @@ private:
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr cancelTrajectoryService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr smoothTrajectoryService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr clearTrajectoryService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reverseTrajectoryService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr flipTrajectoryService;
 
     rclcpp::Client<std_srvs::srv::Empty>::SharedPtr enableMappingClient;
     rclcpp::Client<std_srvs::srv::Empty>::SharedPtr disableMappingClient;
@@ -85,6 +87,8 @@ private:
     void startRecordingServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
     void stopRecordingServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
     void clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
+    void reverseTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
+    void flipTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
     void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
     void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
     void saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln::srv::SaveMapTraj::Response> res);
